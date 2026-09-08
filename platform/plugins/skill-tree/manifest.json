@@ -1,0 +1,32 @@
+{
+  "name": "skill-tree",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "trust_level": "first_party",
+  "description": "Branching skill tree progression: nodes unlock when their prerequisites' levels are reached. Compiles to native challenges + rules (§54): plugins EXTEND the platform with configuration, not foreign code.",
+  "capabilities": ["config:write", "config:publish"],
+  "schema": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "prerequisites": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Node ids; each must reach the required level."
+          },
+          "required_levels": {
+            "type": "array",
+            "items": { "type": "integer" },
+            "description": "Parallel to prerequisites: level each prereq node must reach."
+          },
+          "rewards": { "type": "array", "items": { "$ref": "urn:uep:schema:reward" } }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "name": "productivity",
+  "version": "1.0.0",
+  "kind": "pack",
+  "description": "Task/learning productivity loop: task completion XP with difficulty multipliers, focus streak, weekly goal challenge, level curve, and a focus leaderboard.",
+  "objects": [
+    {
+      "name": "default",
+      "type": "level_track",
+      "config": { "model": "exponential", "base": 100, "factor": 1.15 }
+    },
+    {
+      "name": "task-completed-xp",
+      "type": "rule",
+      "config": {
+        "event_type": "task.completed",
+        "condition": { "type": "exists", "field": "event.payload.difficulty" },
+        "actions": [
+          { "type": "award_xp", "track": "default", "amount": 0 }
+        ],
+        "comment": "amount 0 is a placeholder — install.js patches per-difficulty variants below"
+      }
+    },
+    {
+      "name": "easy-task-rule",
+      "type": "rule",
+      "config": {
+        "event_type": "task.completed",
+        "condition": { "type": "eq", "field": "event.payload.difficulty", "value": "easy" },
+        "actions": [{ "type": "award_xp", "track": "default", "amount": 10 }]
+      }
+    },
+    {
+      "name": "hard-task-rule",
+      "type": "rule",
+      "config": {
+        "event_type": "task.completed",
+        "condition": { "type": "eq", "field": "event.payload.difficulty", "value": "hard" },
+        "actions": [{ "type": "award_xp", "track": "default", "amount": 40 }],
+        "cooldown_seconds": 60
+      }
+    },
+    {
+      "name": "focus-streak",
+      "type": "streak",
+      "config": {
+        "event_type": "task.completed",
+        "window": { "type": "fixed", "unit": "day", "timezone": "UTC" },
+        "grace_seconds": 0,
+        "freezes_allowed": 0
+      }
+    },
+    {
+      "name": "weekly-goal",
+      "type": "challenge",
+      "config": {
+        "progress_event_type": "task.completed",
+        "target": 20,
+        "repeatability": "weekly",
+        "rewards": [
+          { "type": "currency", "amount": 100, "target": "focus-coin" }
+        ]
+      }
+    },
+    {
+      "name": "focus-coin",
+      "type": "currency",
+      "config": { "cap": 0, "allow_negative": false }
+    },
+    {
+      "name": "focus-leaders",
+      "type": "leaderboard",
+      "config": { "direction": "highest", "tie_breaker": "earliest_achieved_then_user_id" }
+    }
+  ]
+}

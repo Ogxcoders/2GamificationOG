@@ -1,0 +1,60 @@
+{
+  "name": "daily-streak",
+  "version": "1.0.0",
+  "kind": "pack",
+  "description": "Opinionated daily engagement loop: daily streak with grace, 3-day ramp challenge, weekly bonus rule, and streak leaderboard. Install = materialize authored objects (§55).",
+  "objects": [
+    {
+      "name": "daily-activity-streak",
+      "type": "streak",
+      "config": {
+        "event_type": "session.started",
+        "window": { "type": "fixed", "unit": "day", "timezone": "UTC" },
+        "grace_seconds": 21600,
+        "freezes_allowed": 2
+      }
+    },
+    {
+      "name": "streak-ramp-challenge",
+      "type": "challenge",
+      "config": {
+        "progress_event_type": "session.started",
+        "target": 3,
+        "repeatability": "weekly",
+        "rewards": [
+          { "type": "currency", "amount": 50, "target": "coin" }
+        ]
+      }
+    },
+    {
+      "name": "weekly-bonus-rule",
+      "type": "rule",
+      "config": {
+        "event_type": "session.started",
+        "condition": {
+          "type": "and",
+          "all": [
+            { "type": "gte", "field": "user.streak.daily-activity-streak.current", "value": 7 }
+          ]
+        },
+        "actions": [
+          { "type": "award_xp", "track": "default", "amount": 250 }
+        ],
+        "frequency_cap": 1
+      }
+    },
+    {
+      "name": "streak-leaderboard",
+      "type": "leaderboard",
+      "config": {
+        "direction": "highest",
+        "tie_breaker": "earliest_achieved_then_user_id"
+      }
+    },
+    {
+      "name": "coin",
+      "type": "currency",
+      "config": { "cap": 100000, "allow_negative": false }
+    }
+  ]
+}

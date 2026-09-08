@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Universal Engagement — Admin</title>
+    <style>
+      :root {
+        --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+        --muted: #8b949e; --accent: #58a6ff; --green: #3fb950; --red: #f85149; --amber: #d29922;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, 'Segoe UI', Roboto, sans-serif; }
+      a { color: var(--accent); }
+      .top { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 10; }
+      .top h1 { font-size: 15px; font-weight: 600; }
+      .top .spacer { flex: 1; }
+      .layout { display: flex; min-height: calc(100vh - 53px); }
+      .side { width: 220px; border-right: 1px solid var(--border); padding: 16px 0; background: var(--panel); }
+      .side button { display: block; width: 100%; text-align: left; padding: 8px 20px; background: none; border: none; color: var(--muted); font: inherit; cursor: pointer; }
+      .side button.active { color: var(--text); background: rgba(88,166,255,.1); border-left: 2px solid var(--accent); }
+      .side button:hover { color: var(--text); }
+      .main { flex: 1; padding: 24px; max-width: 1100px; }
+      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+      .card h2 { font-size: 14px; margin-bottom: 12px; color: var(--text); }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+      input, select, textarea { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font: inherit; }
+      input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
+      button.btn { background: #21262d; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 14px; font: inherit; cursor: pointer; }
+      button.btn:hover { border-color: var(--accent); }
+      button.btn.primary { background: rgba(88,166,255,.2); border-color: var(--accent); }
+      button.btn.danger { border-color: var(--red); color: var(--red); }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+      td { padding: 6px 8px; border-bottom: 1px solid rgba(48,54,61,.5); vertical-align: top; }
+      .pill { display: inline-block; padding: 1px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+      .pill.draft { background: rgba(139,148,158,.15); color: var(--muted); }
+      .pill.published, .pill.active, .pill.processed, .pill.completed, .pill.inserted { background: rgba(63,185,80,.15); color: var(--green); }
+      .pill.paused, .pill.waiting { background: rgba(210,153,34,.15); color: var(--amber); }
+      .pill.failed, .pill.rejected { background: rgba(248,81,73,.15); color: var(--red); }
+      .pill.duplicate { background: rgba(88,166,255,.15); color: var(--accent); }
+      .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+      .muted { color: var(--muted); }
+      .error { color: var(--red); }
+      .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow: auto; font-size: 12px; max-height: 320px; }
+      .trace-node { padding: 4px 0 4px 16px; border-left: 1px dashed var(--border); margin-left: 8px; }
+      .kv { display: grid; grid-template-columns: 140px 1fr; gap: 4px 12px; font-size: 13px; }
+      .kv .k { color: var(--muted); }
+      .stat { font-size: 22px; font-weight: 700; }
+      .stat-label { font-size: 12px; color: var(--muted); }
+      .stats { display: flex; gap: 32px; }
+      .banner { padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
+      .banner.ok { background: rgba(63,185,80,.1); border: 1px solid rgba(63,185,80,.4); }
+      .banner.err { background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.4); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
