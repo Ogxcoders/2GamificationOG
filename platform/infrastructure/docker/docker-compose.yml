@@ -1,0 +1,68 @@
+# Universal Engagement Platform — full local stack.
+# docker compose up -d → postgres + redis + engine + control-plane + admin.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: platform
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  engine:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/engine.Dockerfile
+    environment:
+      ENGINE_BIND: 0.0.0.0:8081
+      RUST_LOG: info
+    ports: ["8081:8081"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/control-plane.Dockerfile
+    environment:
+      CONTROL_PLANE_BIND: 0.0.0.0:8080
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/platform?sslmode=disable
+      ENGINE_URL: http://engine:8081
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      engine: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  admin:
+    build:
+      context: ../apps/admin
+      dockerfile: ../../infrastructure/docker/admin.Dockerfile
+    ports: ["5173:5173"]
+    depends_on: [control-plane]
+    # In production, serve the static build behind the control plane's CORS.
+
+volumes:
+  pgdata:

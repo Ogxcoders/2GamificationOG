@@ -1,0 +1,15 @@
+# build artifacts
+node_modules/
+platform/target/
+platform/services/control-plane/bin/
+*.db
+db/
+
+# environment / secrets
+.env
+
+# internal tooling (not part of the product)
+skills/
+tool-results/
+packages-ui-tmp/
+upload/
