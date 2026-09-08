@@ -52,7 +52,7 @@ pub struct ChallengeProgress {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ChallengeStatus {
     #[default]
     Available,
@@ -108,19 +108,34 @@ impl ActorState {
         let mut m = HashMap::new();
         m.insert("user.id".into(), serde_json::json!(self.user_id));
 
-        // Level/XP per track, with the first/`default` track surfaced as user.level.
+        // Level/XP per track, with the `default` track surfaced as user.level.
+        // Rules/actions reference tracks by NAME ("default") while entries
+        // carry both id and name — surface BOTH keys and read state by either.
         let default_track = cfg
             .level_tracks
             .iter()
-            .find(|t| t.id == "default")
+            .find(|t| t.id == "default" || t.name == "default")
             .or_else(|| cfg.level_tracks.first());
         if let Some(t) = default_track {
-            m.insert("user.level".into(), serde_json::json!(self.track_level(&t.id)));
-            m.insert("user.xp".into(), serde_json::json!(self.track_xp(&t.id)));
+            let lvl = self.track_level(&t.id).max(self.track_level(&t.name));
+            let xp = self.track_xp(&t.id).max(self.track_xp(&t.name));
+            m.insert("user.level".into(), serde_json::json!(lvl));
+            m.insert("user.xp".into(), serde_json::json!(xp));
         }
         for t in &cfg.level_tracks {
-            m.insert(format!("user.{}.level", t.id), serde_json::json!(self.track_level(&t.id)));
-            m.insert(format!("user.{}.xp", t.id), serde_json::json!(self.track_xp(&t.id)));
+            let lvl = self.track_level(&t.id).max(self.track_level(&t.name));
+            let xp = self.track_xp(&t.id).max(self.track_xp(&t.name));
+            for key in [&t.name, &t.id] {
+                if key.is_empty() {
+                    continue;
+                }
+                // Two flat-key spellings so conditions may reference either:
+                // user.{track}.level  (spec §12)  and  user.level.{track}.
+                m.insert(format!("user.{}.level", key), serde_json::json!(lvl));
+                m.insert(format!("user.{}.xp", key), serde_json::json!(xp));
+                m.insert(format!("user.level.{}", key), serde_json::json!(lvl));
+                m.insert(format!("user.xp.{}", key), serde_json::json!(xp));
+            }
         }
 
         // Challenge progress surfaced.

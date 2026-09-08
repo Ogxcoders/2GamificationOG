@@ -4,8 +4,11 @@ package eventing
 
 import (
         "context"
+        "crypto/sha256"
+        "encoding/hex"
         "encoding/json"
         "fmt"
+        "strconv"
         "sync"
         "time"
 
@@ -35,6 +38,10 @@ type CanonicalEvent struct {
 
 // Normalize fills server-side defaults and validates (§10 requirements).
 func (e *CanonicalEvent) Normalize() error {
+        // Whether the client supplied occurred_at decides whether it is part
+        // of the content fingerprint (server-defaulted timestamps would make
+        // every replay unique).
+        clientOccurredAt := e.OccurredAt != ""
         if e.EventID == "" {
                 e.EventID = db.NewID("evt")
         }
@@ -68,7 +75,35 @@ func (e *CanonicalEvent) Normalize() error {
         if e.Payload == nil {
                 e.Payload = map[string]any{}
         }
+        // §11 idempotency: clients that send no idempotency_key get a
+        // deterministic content fingerprint so batch replays are detected as
+        // duplicates (truthful reporting), never double-processed.
+        if e.IdempotencyKey == "" {
+                e.IdempotencyKey = e.contentFingerprint(clientOccurredAt)
+        }
         return nil
+}
+
+// contentFingerprint derives a stable SHA-256 fingerprint from the event's
+// identity + content. occurred_at participates only when the client sent it.
+// Go's json.Marshal sorts map keys, so payload serialization is canonical.
+func (e *CanonicalEvent) contentFingerprint(includeOccurredAt bool) string {
+        h := sha256.New()
+        for _, part := range []string{
+                e.ProjectID, e.EnvironmentID, e.EventType,
+                strconv.Itoa(e.EventVersion), e.ActorID, e.SubjectID, e.Source,
+        } {
+                h.Write([]byte(part))
+                h.Write([]byte{0})
+        }
+        if includeOccurredAt {
+                h.Write([]byte(e.OccurredAt))
+                h.Write([]byte{0})
+        }
+        if pb, err := json.Marshal(e.Payload); err == nil {
+                h.Write(pb)
+        }
+        return "fp_" + hex.EncodeToString(h.Sum(nil))[:40]
 }
 
 // IngestResult reports per-event outcomes truthfully.
@@ -101,15 +136,30 @@ func IngestBatch(ctx context.Context, pool *db.Pool, events []*CanonicalEvent) (
                 if e.IdempotencyKey != "" {
                         idemKey = &e.IdempotencyKey
                 }
-                inserted, err := insertEvent(ctx, tx, e, idemKey)
+                inserted, existingID, err := insertEvent(ctx, tx, e, idemKey)
                 if err != nil {
                         return nil, err
                 }
                 status := "duplicate"
                 if inserted {
                         status = "inserted"
+                        // §9 auto-provision: an actor's first ingested event
+                        // creates their (anonymous) user row.
+                        if e.ActorID != "" {
+                                _, _ = tx.Exec(ctx, `
+                                        INSERT INTO users (id, project_id, environment_id, anonymous)
+                                        VALUES ($1,$2,$3,true)
+                                        ON CONFLICT DO NOTHING`,
+                                        e.ActorID, e.ProjectID, e.EnvironmentID)
+                        }
                 }
-                results = append(results, IngestResult{EventID: e.EventID, Status: status})
+                // Truthful reporting: a fingerprint collision references the
+                // ORIGINAL event id, not the freshly generated one.
+                reportedID := e.EventID
+                if !inserted && existingID != "" {
+                        reportedID = existingID
+                }
+                results = append(results, IngestResult{EventID: reportedID, Status: status})
         }
 
         if err := tx.Commit(ctx); err != nil {
@@ -118,15 +168,17 @@ func IngestBatch(ctx context.Context, pool *db.Pool, events []*CanonicalEvent) (
         return results, nil
 }
 
-// insertEvent performs the atomic insert; inserted=false on conflict.
-func insertEvent(ctx context.Context, tx pgx.Tx, e *CanonicalEvent, idemKey *string) (bool, error) {
+// insertEvent performs the atomic insert; inserted=false on conflict, and
+// existingID resolves the original event when the conflict came from the
+// idempotency fingerprint (so callers can report the true event id).
+func insertEvent(ctx context.Context, tx pgx.Tx, e *CanonicalEvent, idemKey *string) (bool, string, error) {
         var inserted bool
         err := tx.QueryRow(ctx, `
                 INSERT INTO events (event_id, project_id, environment_id, event_type, event_version,
                                     actor_id, subject_id, source, occurred_at, received_at,
                                     correlation_id, causation_id, idempotency_key, payload, metadata)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-                ON CONFLICT (event_id) DO NOTHING
+                ON CONFLICT DO NOTHING
                 RETURNING true`,
                 e.EventID, e.ProjectID, e.EnvironmentID, e.EventType, e.EventVersion,
                 e.ActorID, e.SubjectID, e.Source, e.OccurredAt, e.ReceivedAt,
@@ -134,11 +186,20 @@ func insertEvent(ctx context.Context, tx pgx.Tx, e *CanonicalEvent, idemKey *str
                 Scan(&inserted)
         if err != nil {
                 if err == pgx.ErrNoRows {
-                        return false, nil // conflict — duplicate replay
+                        // conflict — duplicate replay; resolve the original event id
+                        existing := ""
+                        if idemKey != nil {
+                            _ = tx.QueryRow(ctx, `
+                                SELECT event_id FROM events
+                                WHERE project_id=$1 AND environment_id=$2 AND idempotency_key=$3
+                                ORDER BY occurred_at LIMIT 1`,
+                                e.ProjectID, e.EnvironmentID, *idemKey).Scan(&existing)
+                        }
+                        return false, existing, nil
                 }
-                return false, fmt.Errorf("insert event %s: %w", e.EventID, err)
+                return false, "", fmt.Errorf("insert event %s: %w", e.EventID, err)
         }
-        return inserted, nil
+        return inserted, "", nil
 }
 
 // GetEvent fetches one stored event.
@@ -261,8 +322,8 @@ func (b *Bus) Publish(ctx context.Context, e *CanonicalEvent) {
 
 // jsonOrDefault maps nil Go maps to an empty JSON object for NOT NULL columns.
 func jsonOrDefault(m map[string]any) map[string]any {
-	if m == nil {
-		return map[string]any{}
-	}
-	return m
+        if m == nil {
+                return map[string]any{}
+        }
+        return m
 }

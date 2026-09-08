@@ -299,28 +299,7 @@ pub fn process_event(
         }
     }
 
-    // ── 5. Achievements (§23) ──
-    for spec in &cfg.achievements {
-        if !matches!(spec.status, ObjectStatus::Active) {
-            continue;
-        }
-        let out = achievement::evaluate(spec, actor, &ctx, now_ms);
-        if out.newly_unlocked {
-            trace.push(
-                &ctx_node,
-                TraceNodeKind::AchievementUnlocked,
-                format!("achievement `{}` unlocked", spec.id),
-                serde_json::json!({"achievement": spec.id, "rewards": out.reward_grants}),
-            );
-            outcome.achievements_unlocked.push(spec.id.clone());
-            for (i, r) in spec.rewards.iter().enumerate() {
-                let cmd = achievement_reward_command(spec, r, i, &event.event_id, now_ms);
-                outcome.commands.push(cmd);
-            }
-        }
-    }
-
-    // ── 6. Workflows (§16) ──
+    // ── 5. Workflows (§16) ──
     for def in &cfg.workflows {
         if !matches!(def.status, ObjectStatus::Active) {
             continue;
@@ -348,6 +327,48 @@ pub fn process_event(
         apply_projection(&commands, cfg, actor, instant, &mut outcome, &mut trace, &ctx_node);
     }
 
+    // ── 8. Achievements (§23) — evaluated against POST-command state ──
+    // Level-up badges must unlock on the SAME event that crosses the
+    // threshold: rebuild the context from the mutated actor, then evaluate.
+    {
+        let mut post_values = actor.context_values(cfg);
+        for (k, v) in &ctx.values {
+            if k.starts_with("event") {
+                post_values.insert(k.clone(), v.clone());
+            }
+        }
+        let post_ctx = Context {
+            values: post_values,
+            timezone: ctx.timezone.clone(),
+            project_timezone: ctx.project_timezone.clone(),
+            instant: ctx.instant.clone(),
+        };
+        let mut achievement_cmds = Vec::new();
+        for spec in &cfg.achievements {
+            if !matches!(spec.status, ObjectStatus::Active) {
+                continue;
+            }
+            let out = achievement::evaluate(spec, actor, &post_ctx, now_ms);
+            if out.newly_unlocked {
+                trace.push(
+                    &ctx_node,
+                    TraceNodeKind::AchievementUnlocked,
+                    format!("achievement `{}` unlocked", spec.id),
+                    serde_json::json!({"achievement": spec.id, "rewards": out.reward_grants}),
+                );
+                outcome.achievements_unlocked.push(spec.id.clone());
+                for (i, r) in spec.rewards.iter().enumerate() {
+                    achievement_cmds.push(achievement_reward_command(spec, r, i, &event.event_id, now_ms));
+                }
+            }
+        }
+        // Project reward effects (wallet deltas etc.) into the snapshot too.
+        if !achievement_cmds.is_empty() && !options.dry_run {
+            apply_projection(&achievement_cmds, cfg, actor, instant, &mut outcome, &mut trace, &ctx_node);
+        }
+        outcome.commands.extend(achievement_cmds);
+    }
+
     outcome.state = actor.clone();
     outcome.trace = trace;
     Ok(outcome)
@@ -370,15 +391,20 @@ fn apply_projection(
     for cmd in commands {
         match &cmd.kind {
             CommandKind::AwardXp { track, amount } => {
+                // Rules reference tracks by NAME ("default"); engine entries
+                // carry both id and name — match either (E2E lesson: id-only
+                // lookup silently skipped level computation).
                 let model = cfg
                     .level_tracks
                     .iter()
-                    .find(|t| &t.id == track)
+                    .find(|t| &t.id == track || &t.name == track)
                     .map(|t| t.model.clone());
+                let track_after_xp;
                 if let Some(model) = model {
                     let before = actor.track_level(track);
                     let st = actor.track(track);
                     let result = platform_progression::apply_xp(&model, st, *amount);
+                    track_after_xp = Some(result.xp_after);
                     *outcome.xp_deltas.entry(track.clone()).or_insert(0) += *amount;
                     if result.leveled_up {
                         outcome.level_ups.insert(track.clone(), result.level_after);
@@ -393,7 +419,29 @@ fn apply_projection(
                     // XP without a track definition still accumulates.
                     let st = actor.track(track);
                     st.xp = (st.xp + amount).max(0);
+                    track_after_xp = Some(st.xp);
                     *outcome.xp_deltas.entry(track.clone()).or_insert(0) += *amount;
+                }
+                // §29: XP leaderboards watching this track auto-update with the
+                // new XP total (board track unset means the default track).
+                if let Some(total) = track_after_xp {
+                    for lb in &cfg.leaderboards {
+                        if lb.metric == platform_common::config::LeaderboardMetric::Xp
+                            && (lb.track.is_empty() || &lb.track == track)
+                        {
+                            let next = total;
+                            let prev = actor.leaderboards.get(&lb.id).copied().unwrap_or(0);
+                            let _ = prev;
+                            actor.leaderboards.insert(lb.id.clone(), next);
+                            outcome.leaderboard_updates.insert(lb.id.clone(), next);
+                            trace.push(
+                                parent,
+                                TraceNodeKind::LeaderboardUpdated,
+                                format!("leaderboard `{}` -> {} (xp on `{}`)", lb.name, next, track),
+                                serde_json::json!({"leaderboard": lb.id, "score": next, "metric": "xp"}),
+                            );
+                        }
+                    }
                 }
             }
             CommandKind::AddCurrency { currency, amount } => {

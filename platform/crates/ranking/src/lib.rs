@@ -141,6 +141,8 @@ mod tests {
             name: "Test".into(),
             direction,
             tie_breaker: tb,
+            metric: platform_common::config::LeaderboardMetric::Xp,
+            track: "default".into(),
             window: None,
             status: ObjectStatus::Active,
         }

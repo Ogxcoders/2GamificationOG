@@ -166,7 +166,7 @@ pub struct ChallengeReward {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "type")]
+#[serde(rename_all = "snake_case")]
 pub enum RewardKind {
     Xp,
     Currency,
@@ -223,6 +223,7 @@ pub struct AchievementSpec {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "LevelTrackWire", into = "LevelTrackWire")]
 pub struct LevelTrack {
     pub id: String,
     pub name: String,
@@ -231,8 +232,10 @@ pub struct LevelTrack {
     pub status: ObjectStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "model", rename_all = "lowercase")]
+/// Progression model variants (§20). Serialization is handled by LevelTrack's
+/// flat wire form; this enum is the in-memory API consumed by the progression
+/// crate.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ProgressionModel {
     Linear {
         xp_per_level: i64,
@@ -244,6 +247,71 @@ pub enum ProgressionModel {
     Formula {
         expression: String,
     },
+}
+
+// LevelTrack (de)serializes from the authored FLAT shape: the model kind is
+// a sibling string field and the parameters live at the track level —
+// {"model":"linear","xp_per_level":100} — so the conversion happens at the
+// struct level, not on the model field.
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct LevelTrackWire {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    model: ModelKind,
+    #[serde(default)]
+    xp_per_level: i64,
+    #[serde(default)]
+    base: i64,
+    #[serde(default)]
+    factor: f64,
+    #[serde(default)]
+    expression: String,
+    #[serde(default)]
+    status: ObjectStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+enum ModelKind {
+    #[default]
+    Linear,
+    Exponential,
+    Formula,
+}
+
+impl From<LevelTrackWire> for LevelTrack {
+    fn from(w: LevelTrackWire) -> Self {
+        let model = match w.model {
+            ModelKind::Linear => ProgressionModel::Linear { xp_per_level: w.xp_per_level },
+            ModelKind::Exponential => ProgressionModel::Exponential { base: w.base, factor: w.factor },
+            ModelKind::Formula => ProgressionModel::Formula { expression: w.expression },
+        };
+        LevelTrack { id: w.id, name: w.name, model, status: w.status }
+    }
+}
+
+impl From<LevelTrack> for LevelTrackWire {
+    fn from(t: LevelTrack) -> Self {
+        let (model, xp_per_level, base, factor, expression) = match t.model {
+            ProgressionModel::Linear { xp_per_level } => (ModelKind::Linear, xp_per_level, 0, 0.0, String::new()),
+            ProgressionModel::Exponential { base, factor } => (ModelKind::Exponential, 0, base, factor, String::new()),
+            ProgressionModel::Formula { expression } => (ModelKind::Formula, 0, 0, 0.0, expression),
+        };
+        LevelTrackWire {
+            id: t.id,
+            name: t.name,
+            model,
+            xp_per_level,
+            base,
+            factor,
+            expression,
+            status: t.status,
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -276,11 +344,28 @@ pub struct LeaderboardSpec {
     /// Determistic tie-breaker policy.
     #[serde(default)]
     pub tie_breaker: TieBreaker,
+    /// What the board tracks (§29): xp on a track (default), a currency
+    /// balance, or a raw action-driven score.
+    #[serde(default)]
+    pub metric: LeaderboardMetric,
+    /// The XP track or currency id the metric is measured on. Defaults to
+    /// the "default" track (and is ignored for raw score boards).
+    #[serde(default)]
+    pub track: String,
     /// Optional window (rolling/seasonal leaderboards).
     #[serde(default)]
     pub window: Option<TimeWindow>,
     #[serde(default)]
     pub status: ObjectStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LeaderboardMetric {
+    #[default]
+    Xp,
+    Currency,
+    Score,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

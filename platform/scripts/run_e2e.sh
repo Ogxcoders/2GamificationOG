@@ -32,8 +32,14 @@ if ! pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then
   for i in $(seq 1 20); do pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 && break; sleep 0.5; done
 fi
 pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 && ok "postgres up" || { bad "postgres up" "$(tail -3 /tmp/pg.log)"; exit 1; }
-psql -h 127.0.0.1 -U postgres -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" >/dev/null 2>&1
-psql -h 127.0.0.1 -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='platform'" | grep -q 1 || psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE platform" >/dev/null
+# Hard reset of the platform DB (terminate connections, drop, recreate).
+# NOTE: must target the `platform` database explicitly — psql defaults to the
+# `postgres` DB and would otherwise reset the WRONG database, leaving stale
+# tenants behind (breaks the first-run bootstrap guard).
+psql -h 127.0.0.1 -U postgres -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='platform' AND pid <> pg_backend_pid();" >/dev/null 2>&1
+psql -h 127.0.0.1 -U postgres -d postgres -c "DROP DATABASE IF EXISTS platform;" >/dev/null 2>&1
+psql -h 127.0.0.1 -U postgres -d postgres -c "CREATE DATABASE platform;" >/dev/null 2>&1
+psql -h 127.0.0.1 -U postgres -d platform -tc "SELECT 1" | grep -q 1 && ok "platform database recreated" || { bad "platform database" "create failed"; exit 1; }
 
 # ── 2. engine-service ────────────────────────────────────────────────────────
 say "starting engine-service"
@@ -132,13 +138,13 @@ done
 # ── 9. Player state verification ─────────────────────────────────────────────
 say "player state assertions"
 ST=$(curl -fsS $SCOPE/users/user-alice/state -H "$AUTH")
-need "alice xp=300" "$ST" '"xp": 300'
-need "alice level=3" "$ST" '"level": 3'
-need "alice coins=65 (3×5 + 50 challenge)" "$ST" '"balance": 65'
-need "challenge completed" "$ST" '"status": "completed"'
-need "streak day 1" "$ST" '"current": 1'
+need "alice xp=300" "$ST" '"xp":300'
+need "alice level=3" "$ST" '"level":3'
+need "alice coins=65 (3×5 + 50 challenge)" "$ST" '"balance":65'
+need "challenge completed" "$ST" '"status":"completed"'
+need "streak day 1" "$ST" '"current":1'
 STB=$(curl -fsS $SCOPE/users/user-bob/state -H "$AUTH")
-need "bob xp=100" "$STB" '"xp": 100'
+need "bob xp=100" "$STB" '"xp":100'
 
 # Re-processing the same event must not double-award (idempotency)
 FIRST=$(echo $IDS | awk '{print $1}')
@@ -146,7 +152,7 @@ R1=$(curl -sS -X POST $SCOPE/events/$FIRST/process -H "$AUTH")
 R1_APPLIED=$(echo "$R1" | $PY -c 'import json,sys; print(json.load(sys.stdin).get("applied_commands", -1))')
 [ "$R1_APPLIED" = "0" ] && ok "replay process: 0 commands applied" || bad "replay idempotency" "$R1"
 ST2=$(curl -fsS $SCOPE/users/user-alice/state -H "$AUTH")
-need "alice xp still 300 after replay" "$ST2" '"xp": 300'
+need "alice xp still 300 after replay" "$ST2" '"xp":300'
 
 # ── 10. Trace: WHY ───────────────────────────────────────────────────────────
 say "decision trace"
@@ -158,8 +164,8 @@ need "trace records ledger entries" "$TR" 'ledger_entry'
 say "leaderboard"
 LBID=$(curl -fsS "$SCOPE/objects?type=leaderboard" -H "$AUTH" | $PY -c 'import json,sys; print(json.load(sys.stdin)["objects"][0]["id"])')
 LB=$(curl -fsS "$SCOPE/leaderboards/$LBID?limit=10" -H "$AUTH")
-need "alice ranks #1 (300)" "$LB" '"rank": 1'
-need "bob ranks #2 (100)" "$LB" '"rank": 2'
+need "alice ranks #1 (300)" "$LB" '"rank":1'
+need "bob ranks #2 (100)" "$LB" '"rank":2'
 
 # ── 12. Economy guards ───────────────────────────────────────────────────────
 say "economy NET validation"
@@ -170,7 +176,7 @@ A1=$(curl -fsS -X POST $SCOPE/users/user-alice/wallets/adjust -H "$AUTH" -H 'Con
 A2=$(curl -fsS -X POST $SCOPE/users/user-alice/wallets/adjust -H "$AUTH" -H 'Content-Type: application/json' -d '{"currency":"coin","amount":10,"reference":"grant-1"}')
 need "wallet adjust applied once" "$A1" '"applied":true'
 need "wallet replay not applied" "$A2" '"applied":false'
-need "balance still 75 (65+10)" "$A2" '"balance": 75'
+need "balance still 75 (65+10)" "$A2" '"balance":75'
 
 # ── 13. Config lifecycle: pause stops firing ─────────────────────────────────
 say "pause/resume semantics"
@@ -179,7 +185,7 @@ EV2=$(curl -fsS -X POST $SCOPE/events -H "$AUTH" -H 'Content-Type: application/j
 EID2=$(echo "$EV2" | $PY -c 'import json,sys; print(json.load(sys.stdin)["results"][0]["event_id"])')
 P2=$(curl -sS -X POST $SCOPE/events/$EID2/process -H "$AUTH")
 ST3=$(curl -fsS $SCOPE/users/user-alice/state -H "$AUTH")
-need "paused rule: no xp change" "$ST3" '"xp": 300'
+need "paused rule: no xp change" "$ST3" '"xp":300'
 curl -fsS -X POST $SCOPE/objects/$RULE_ID/resume -H "$AUTH" > /dev/null
 
 # ── 14. Cross-tenant isolation ───────────────────────────────────────────────
@@ -203,7 +209,7 @@ need "tools/list works" "$TOOLS" 'list_config_objects'
 EXPLAIN=$(curl -fsS -X POST $SCOPE/mcp -H "$AUTH" -H 'Content-Type: application/json' -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"explain_event\",\"arguments\":{\"event_id\":\"$FIRST\"}}}")
 need "explain_event returns trace" "$EXPLAIN" 'rule_matched'
 PLST=$(curl -fsS -X POST $SCOPE/mcp -H "$AUTH" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"player_state","arguments":{"user_id":"user-alice"}}}')
-need "player_state tool works" "$PLST" '"xp": 300'
+need "player_state tool works" "$PLST" '"xp\\":300'
 
 # ── 16. Webhooks ─────────────────────────────────────────────────────────────
 say "webhooks"

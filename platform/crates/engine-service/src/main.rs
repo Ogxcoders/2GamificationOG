@@ -116,11 +116,17 @@ async fn process_handler(
 }
 
 async fn validate_handler(
-    Json(event): Json<platform_common::CanonicalEvent>,
+    Json(raw): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    match platform_core_engine::validate_event(&event) {
-        Ok(()) => Json(serde_json::json!({"valid": true})),
-        Err(e) => Json(serde_json::json!({"valid": false, "error": e.to_string(), "code": e.code()})),
+    // Accept ANY JSON shape: deserialization failures are validation failures
+    // (reported as valid:false), not HTTP errors — the endpoint's whole job
+    // is to tell clients whether an event is well-formed.
+    match serde_json::from_value::<platform_common::CanonicalEvent>(raw) {
+        Err(e) => Json(serde_json::json!({"valid": false, "error": e.to_string(), "code": "schema_mismatch"})),
+        Ok(event) => match platform_core_engine::validate_event(&event) {
+            Ok(()) => Json(serde_json::json!({"valid": true})),
+            Err(e) => Json(serde_json::json!({"valid": false, "error": e.to_string(), "code": e.code()})),
+        },
     }
 }
 

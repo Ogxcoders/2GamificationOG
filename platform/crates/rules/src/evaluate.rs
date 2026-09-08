@@ -52,12 +52,12 @@ pub fn evaluate_condition(cond: &Condition, ctx: &Context) -> RuleEvaluation {
         Condition::Lt { field, value } => cmp_cond(field, value, ctx, |o| o < 0, "lt"),
         Condition::Lte { field, value } => cmp_cond(field, value, ctx, |o| o <= 0, "lte"),
         Condition::In { field, values } => {
-            let v = as_value(resolve(field, ctx));
+            let v = as_value(resolve_field(field, ctx));
             let m = values.iter().any(|x| values_eq(&v, x));
             RuleEvaluation { matched: m, reason: if m { String::new() } else { format!("in: {:?} not in list", v) } }
         }
         Condition::NotIn { field, values } => {
-            let v = as_value(resolve(field, ctx));
+            let v = as_value(resolve_field(field, ctx));
             let m = !values.iter().any(|x| values_eq(&v, x));
             RuleEvaluation { matched: m, reason: if m { String::new() } else { format!("not_in: {:?} in list", v) } }
         }
@@ -65,18 +65,18 @@ pub fn evaluate_condition(cond: &Condition, ctx: &Context) -> RuleEvaluation {
         Condition::StartsWith { field, value } => str_cond(field, value, ctx, |a, b| a.starts_with(b), "starts_with"),
         Condition::EndsWith { field, value } => str_cond(field, value, ctx, |a, b| a.ends_with(b), "ends_with"),
         Condition::Between { field, min, max } => {
-            let v = num(as_value(resolve(field, ctx)));
+            let v = num(as_value(resolve_field(field, ctx)));
             let lo = num(min.clone());
             let hi = num(max.clone());
             let m = v >= lo && v <= hi;
             RuleEvaluation { matched: m, reason: if m { String::new() } else { format!("between: {} not in [{}, {}]", v, lo, hi) } }
         }
         Condition::Exists { field } => {
-            let m = !resolve(field, ctx).is_null_or_missing();
+            let m = !resolve_field(field, ctx).is_null_or_missing();
             RuleEvaluation { matched: m, reason: if m { String::new() } else { "exists: value is null/missing".into() } }
         }
         Condition::NotExists { field } => {
-            let m = resolve(field, ctx).is_null_or_missing();
+            let m = resolve_field(field, ctx).is_null_or_missing();
             RuleEvaluation { matched: m, reason: if m { String::new() } else { "not_exists: value present".into() } }
         }
     }
@@ -114,22 +114,29 @@ impl Resolved {
     }
 }
 
-fn resolve(op: &Operand, ctx: &Context) -> Resolved {
+/// FIELD operands are always context paths; an unresolvable path is Missing
+/// (null semantics per §13).
+fn resolve_field(op: &Operand, ctx: &Context) -> Resolved {
     match op {
         Operand::Value(v) => Resolved::Value(v.clone()),
-        Operand::Path(p) => {
-            // Bare literals (no dot) that fail to resolve are literal strings.
-            match resolve_path(&ctx.values, p) {
-                Some(v) => Resolved::Value(v),
-                None => {
-                    if p.contains('.') {
-                        Resolved::Missing(p.clone())
-                    } else {
-                        Resolved::Value(Value::String(p.clone()))
-                    }
-                }
-            }
-        }
+        Operand::Path(p) => match resolve_path(&ctx.values, p) {
+            Some(v) => Resolved::Value(v),
+            None => Resolved::Missing(p.clone()),
+        },
+    }
+}
+
+/// VALUE operands are literals by default. A string that happens to contain
+/// dots ("lesson.completed") is a LITERAL unless it resolves as a context
+/// path (dynamic comparison). Found in E2E: symmetric path resolution made
+/// every dotted string value a missing path -> all eq conditions failed.
+fn resolve_value(op: &Operand, ctx: &Context) -> Resolved {
+    match op {
+        Operand::Value(v) => Resolved::Value(v.clone()),
+        Operand::Path(p) => match resolve_path(&ctx.values, p) {
+            Some(v) => Resolved::Value(v),
+            None => Resolved::Value(Value::String(p.clone())),
+        },
     }
 }
 
@@ -152,8 +159,8 @@ fn cmp_cond(
     ok: impl Fn(i32) -> bool,
     label: &str,
 ) -> RuleEvaluation {
-    let l = resolve(field, ctx);
-    let r = resolve(value, ctx);
+    let l = resolve_field(field, ctx);
+    let r = resolve_value(value, ctx);
 
     // Null/missing semantics: comparisons with null are false except neq
     // (null != concrete is true when the field exists-but-null vs literal?).
@@ -224,13 +231,13 @@ fn str_cond(
     ok: fn(&str, &str) -> bool,
     label: &str,
 ) -> RuleEvaluation {
-    let l = match as_value(resolve(field, ctx)) {
+    let l = match as_value(resolve_field(field, ctx)) {
         Value::String(s) => s,
         other => {
             return RuleEvaluation { matched: false, reason: format!("{}: field {:?} not a string", label, other) }
         }
     };
-    let r = match as_value(resolve(value, ctx)) {
+    let r = match as_value(resolve_value(value, ctx)) {
         Value::String(s) => s,
         other => {
             return RuleEvaluation { matched: false, reason: format!("{}: value {:?} not a string", label, other) }
@@ -284,6 +291,30 @@ mod tests {
         assert!(cond(Condition::Gte { field: Operand::path("user.level"), value: Operand::value(json!(5)) }).matched);
         assert!(!cond(Condition::Gt { field: Operand::path("user.level"), value: Operand::value(json!(5)) }).matched);
         assert!(cond(Condition::Lt { field: Operand::path("user.level"), value: Operand::value(json!(6)) }).matched);
+    }
+
+    #[test]
+    fn wire_shaped_dotted_value_is_literal() {
+        // Regression (E2E): on the wire, "value":"lesson.completed"
+        // deserializes (untagged) to Operand::Path — it must still compare as
+        // a LITERAL string, not a missing path. Fields stay paths.
+        let c = Condition::Eq {
+            field: Operand::path("event.type"),
+            value: Operand::path("lesson.completed"),
+        };
+        assert!(cond(c).matched);
+
+        // Dynamic comparison still works when the value path RESOLVES:
+        let c2 = Condition::Eq {
+            field: Operand::path("event.type"),
+            value: Operand::path("event.type"),
+        };
+        assert!(cond(c2).matched);
+
+        // Unresolvable dotted field stays missing (not a literal):
+        let c3 = Condition::Gte { field: Operand::path("user.missing.level"), value: Operand::path("5") };
+        let r = cond(c3);
+        assert!(!r.matched);
     }
 
     #[test]
