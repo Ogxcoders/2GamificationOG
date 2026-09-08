@@ -1,0 +1,88 @@
+{
+  "$comment": "Golden-path fixture (§156 Customer Zero): every object needed to run the reference verification end-to-end. Used by the E2E harness and the pack installer tests.",
+  "project": "customer-zero",
+  "environment": "development",
+  "objects": [
+    {
+      "name": "default",
+      "type": "level_track",
+      "config": { "model": "linear", "xp_per_level": 100 }
+    },
+    {
+      "name": "coin",
+      "type": "currency",
+      "config": { "cap": 10000, "allow_negative": false }
+    },
+    {
+      "name": "lesson-completed-xp",
+      "type": "rule",
+      "config": {
+        "event_type": "lesson.completed",
+        "condition": { "type": "eq", "field": "event.type", "value": "lesson.completed" },
+        "actions": [
+          { "type": "award_xp", "track": "default", "amount": 100 },
+          { "type": "add_currency", "currency": "coin", "amount": 5 }
+        ],
+        "cooldown_seconds": 0,
+        "frequency_cap": 0
+      }
+    },
+    {
+      "name": "three-lessons",
+      "type": "challenge",
+      "config": {
+        "progress_event_type": "lesson.completed",
+        "target": 3,
+        "repeatability": "once",
+        "rewards": [{ "type": "currency", "amount": 50, "target": "coin" }]
+      }
+    },
+    {
+      "name": "daily-learning",
+      "type": "streak",
+      "config": {
+        "event_type": "lesson.completed",
+        "window": { "type": "fixed", "unit": "day", "timezone": "UTC" },
+        "grace_seconds": 21600,
+        "freezes_allowed": 1
+      }
+    },
+    {
+      "name": "level-5-badge",
+      "type": "achievement",
+      "config": {
+        "condition": { "type": "gte", "field": "user.level.default", "value": 5 },
+        "hidden": false,
+        "repeatable": false,
+        "rewards": [{ "type": "currency", "amount": 200, "target": "coin" }]
+      }
+    },
+    {
+      "name": "top-learners",
+      "type": "leaderboard",
+      "config": { "direction": "highest", "tie_breaker": "earliest_achieved_then_user_id" }
+    }
+  ],
+  "events": [
+    { "event_type": "lesson.completed", "actor_id": "user-alice", "payload": { "lesson_id": "l1", "points": 25 } },
+    { "event_type": "lesson.completed", "actor_id": "user-alice", "payload": { "lesson_id": "l2", "points": 25 } },
+    { "event_type": "lesson.completed", "actor_id": "user-alice", "payload": { "lesson_id": "l3", "points": 25 } },
+    { "event_type": "lesson.completed", "actor_id": "user-bob", "payload": { "lesson_id": "l1", "points": 25 } },
+    { "event_type": "quiz.perfect", "actor_id": "user-alice", "payload": { "quiz_id": "q9" } }
+  ],
+  "expectations": {
+    "user-alice": {
+      "xp": { "default": 300 },
+      "level": { "default": 3 },
+      "wallets": { "coin": 65 },
+      "challenges": { "three-lessons": { "status": "completed", "progress": 3 } },
+      "streaks": { "daily-learning": { "current": 1 } },
+      "achievements": [],
+      "leaderboard": { "top-learners": 300 }
+    },
+    "user-bob": {
+      "xp": { "default": 100 },
+      "wallets": { "coin": 5 }
+    }
+  }
+}

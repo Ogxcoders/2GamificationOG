@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.universalengagement.dev/condition.schema.json",
+  "title": "Condition",
+  "description": "The condition tree evaluated by the rule engine (§13). Type-tagged JSON shared by the Go compiler, Rust evaluator, and all SDKs.",
+  "oneOf": [
+    { "$ref": "#/$defs/composition" },
+    { "$ref": "#/$defs/comparison" },
+    { "$ref": "#/$defs/membership" },
+    { "$ref": "#/$defs/stringOp" },
+    { "$ref": "#/$defs/range" },
+    { "$ref": "#/$defs/existence" }
+  ],
+  "$defs": {
+    "operand": {
+      "description": "A JSON string is an OPERAND: a path reference when it contains a dot AND resolves in the context; otherwise a literal string. Non-strings are literal values.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    },
+    "composition": {
+      "type": "object",
+      "required": ["type"],
+      "oneOf": [
+        {
+          "properties": {
+            "type": { "const": "and" },
+            "all": { "type": "array", "items": { "$ref": "#" } }
+          },
+          "required": ["all"]
+        },
+        {
+          "properties": {
+            "type": { "const": "or" },
+            "any": { "type": "array", "items": { "$ref": "#" } }
+          },
+          "required": ["any"]
+        },
+        {
+          "properties": {
+            "type": { "const": "not" },
+            "condition": { "$ref": "#" }
+          },
+          "required": ["condition"]
+        }
+      ]
+    },
+    "comparison": {
+      "type": "object",
+      "required": ["type", "field", "value"],
+      "properties": {
+        "type": { "enum": ["eq", "neq", "gt", "gte", "lt", "lte"] },
+        "field": { "$ref": "#/$defs/operand" },
+        "value": { "$ref": "#/$defs/operand" }
+      }
+    },
+    "membership": {
+      "type": "object",
+      "required": ["type", "field", "values"],
+      "properties": {
+        "type": { "enum": ["in", "not_in"] },
+        "field": { "$ref": "#/$defs/operand" },
+        "values": { "type": "array", "items": {} }
+      }
+    },
+    "stringOp": {
+      "type": "object",
+      "required": ["type", "field", "value"],
+      "properties": {
+        "type": { "enum": ["contains", "starts_with", "ends_with"] },
+        "field": { "$ref": "#/$defs/operand" },
+        "value": { "$ref": "#/$defs/operand" }
+      }
+    },
+    "range": {
+      "type": "object",
+      "required": ["type", "field", "min", "max"],
+      "properties": {
+        "type": { "const": "between" },
+        "field": { "$ref": "#/$defs/operand" },
+        "min": { "type": "number" },
+        "max": { "type": "number" }
+      }
+    },
+    "existence": {
+      "type": "object",
+      "required": ["type", "field"],
+      "properties": {
+        "type": { "enum": ["exists", "not_exists"] },
+        "field": { "$ref": "#/$defs/operand" }
+      }
+    }
+  }
+}

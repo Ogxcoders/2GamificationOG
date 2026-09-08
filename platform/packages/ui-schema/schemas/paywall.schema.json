@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.universalengagement.dev/paywall.schema.json",
+  "title": "PaywallLayout",
+  "description": "Server-driven paywall UI contract (§42): layout + typed sections the client renders with its own design system. The server NEVER ships HTML.",
+  "type": "object",
+  "required": ["layout", "sections"],
+  "properties": {
+    "layout": {
+      "enum": ["fullscreen", "modal", "bottom_sheet", "inline", "slide_over", "multistep", "story", "custom"]
+    },
+    "title": { "type": "string" },
+    "subtitle": { "type": "string" },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "close_behavior": { "enum": ["dismiss", "redirect", "sticky"], "default": "dismiss" },
+    "trigger_event": { "type": "string" },
+    "segment_id": { "type": "string" },
+    "priority": { "type": "integer", "default": 0 }
+  },
+  "$defs": {
+    "section": {
+      "type": "object",
+      "required": ["type"],
+      "oneOf": [
+        {
+          "properties": {
+            "type": { "const": "hero" },
+            "image_url": { "type": "string" },
+            "headline": { "type": "string" }
+          }
+        },
+        {
+          "properties": {
+            "type": { "const": "benefits" },
+            "items": { "type": "array", "items": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" }, "icon": { "type": "string" } } } }
+          }
+        },
+        {
+          "properties": {
+            "type": { "const": "offer_card" },
+            "offer_id": { "type": "string" },
+            "product_id": { "type": "string" },
+            "price_cents": { "type": "integer" },
+            "currency": { "type": "string" },
+            "original_price_cents": { "type": "integer" },
+            "badge": { "type": "string" },
+            "cta_label": { "type": "string" }
+          },
+          "required": ["offer_id", "product_id"]
+        },
+        {
+          "properties": {
+            "type": { "const": "social_proof" },
+            "stat": { "type": "string" },
+            "label": { "type": "string" }
+          }
+        },
+        {
+          "properties": {
+            "type": { "const": "testimonials" },
+            "items": { "type": "array", "items": { "type": "object", "properties": { "quote": { "type": "string" }, "author": { "type": "string" }, "avatar_url": { "type": "string" } } } }
+          }
+        },
+        {
+          "properties": {
+            "type": { "const": "actions" },
+            "primary": { "$ref": "#/$defs/button" },
+            "secondary": { "$ref": "#/$defs/button" }
+          }
+        },
+        {
+          "properties": {
+            "type": { "const": "legal" },
+            "terms_url": { "type": "string" },
+            "privacy_url": { "type": "string" },
+            "restore_label": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "button": {
+      "type": "object",
+      "required": ["label", "action"],
+      "properties": {
+        "label": { "type": "string" },
+        "action": { "enum": ["purchase", "restore", "dismiss", "deeplink", "url"] },
+        "offer_id": { "type": "string" },
+        "url": { "type": "string" },
+        "style": { "enum": ["primary", "secondary", "destructive", "text"] }
+      }
+    }
+  }
+}

@@ -1,0 +1,413 @@
+openapi: 3.1.0
+info:
+  title: Universal Engagement Platform API
+  version: 1.0.0
+  description: |
+    Gamification + monetization control plane.
+
+    Auth: every request carries `Authorization: Bearer <keyID.secret>`.
+    Keys are scoped to (project, environment) pairs and hold capabilities.
+    Tenant isolation: scoped keys receive 404 (not 403) for other tenants'
+    resources — existence is not disclosed.
+
+    Idempotency: events dedup on (project, environment, idempotency_key);
+    commands dedup on (source, reference); wallets/transactions dedup on
+    reference keys. Replays are reported truthfully, never double-applied.
+security:
+  - bearerKey: []
+tags:
+  - name: tenancy
+  - name: objects
+  - name: events
+  - name: players
+  - name: economy
+  - name: monetization
+  - name: webhooks
+  - name: analytics
+  - name: mcp
+paths:
+  /v1/bootstrap:
+    post:
+      tags: [tenancy]
+      summary: Provision org + project + 3 environments + admin key (first-run)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organization, project]
+              properties:
+                organization: { type: string }
+                project: { type: string }
+      responses:
+        "201":
+          description: Created; includes the one-time API key
+        "409": { description: Platform already bootstrapped (no token) }
+  /v1/projects:
+    get:
+      tags: [tenancy]
+      summary: List projects for an organization
+      parameters:
+        - { name: organization_id, in: query, required: true, schema: { type: string } }
+      responses: { "200": { description: OK } }
+  /v1/projects/{projectId}/environments:
+    get:
+      tags: [tenancy]
+      summary: List environments
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: OK } }
+  /v1/projects/{projectId}/keys:
+    post:
+      tags: [tenancy]
+      summary: Create an API key (secret shown once)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                scopes: { type: array, items: { type: string } }
+                environment_id: { type: string }
+      responses: { "201": { description: Created } }
+  /v1/keys/{keyId}:
+    delete:
+      tags: [tenancy]
+      summary: Revoke an API key
+      parameters:
+        - { name: keyId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: Revoked } }
+  /v1/projects/{projectId}/environments/{environmentId}/objects:
+    post:
+      tags: [objects]
+      summary: Create a draft config object (validated at create)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ObjectRequest" }
+      responses:
+        "201": { description: Created }
+        "422": { description: Validation failed (field-level message) }
+    get:
+      tags: [objects]
+      summary: List objects (optional type filter)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string } }
+      responses: { "200": { description: OK } }
+  /v1/projects/{projectId}/environments/{environmentId}/objects/{objectId}:
+    get:
+      tags: [objects]
+      summary: Get one object
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: objectId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: OK }, "404": { description: Not found in this environment } }
+    put:
+      tags: [objects]
+      summary: Update a DRAFT (published objects are immutable)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: objectId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: Updated }, "409": { description: Published — immutable } }
+    delete:
+      tags: [objects]
+      summary: Archive (safe deletion)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: objectId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: Archived } }
+  /v1/projects/{projectId}/environments/{environmentId}/objects/{objectId}/publish:
+    post:
+      tags: [objects]
+      summary: Publish (immutable snapshot + runtime materialize + recompile)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: objectId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: Published }, "409": { description: Already published } }
+  /v1/projects/{projectId}/environments/{environmentId}/objects/{objectId}/promote:
+    post:
+      tags: [objects]
+      summary: Promote to another environment (id remapping)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: objectId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_environment]
+              properties:
+                to_environment: { type: string, description: "development|staging|production or env id" }
+      responses: { "200": { description: Promoted + auto-published }, "404": { description: Target environment missing } }
+  /v1/projects/{projectId}/environments/{environmentId}/engine-config:
+    get:
+      tags: [objects]
+      summary: Current compiled engine config snapshot
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: Snapshot } }
+  /v1/projects/{projectId}/environments/{environmentId}/events:
+    post:
+      tags: [events]
+      summary: Ingest a batch (atomic, truthful duplicates)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [events]
+              properties:
+                events:
+                  type: array
+                  maxItems: 500
+                  items: { $ref: "#/components/schemas/CanonicalEvent" }
+      responses:
+        "200":
+          description: Per-event results (inserted | duplicate | rejected)
+    get:
+      tags: [events]
+      summary: List events (filters: type, actor_id, status)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string } }
+        - { name: actor_id, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { "200": { description: OK } }
+  /v1/projects/{projectId}/environments/{environmentId}/events/{eventId}/process:
+    post:
+      tags: [events]
+      summary: Run the processing pipeline for one event
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: eventId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Processed (outcome + trace summary) }
+        "422": { description: Engine rejected / application failed }
+  /v1/projects/{projectId}/environments/{environmentId}/events/{eventId}/trace:
+    get:
+      tags: [events]
+      summary: Decision trace — WHY this event produced this outcome
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: eventId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: Trace node graph } }
+  /v1/projects/{projectId}/environments/{environmentId}/users:
+    post:
+      tags: [players]
+      summary: Upsert a user (anonymous or identified)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: string }
+                anonymous: { type: boolean }
+                display_name: { type: string }
+                attributes: { type: object }
+      responses: { "200": { description: Upserted } }
+  /v1/projects/{projectId}/environments/{environmentId}/users/{userId}/state:
+    get:
+      tags: [players]
+      summary: Full player state (tracks, wallets, challenges, streaks, achievements...)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: userId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: State snapshot } }
+  /v1/projects/{projectId}/environments/{environmentId}/leaderboards/{leaderboardId}:
+    get:
+      tags: [players]
+      summary: Ranked board (deterministic ties; me= adds caller row)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: leaderboardId, in: path, required: true, schema: { type: string } }
+        - { name: window, in: query, schema: { type: string, default: ever } }
+        - { name: me, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+      responses: { "200": { description: Board page } }
+  /v1/projects/{projectId}/environments/{environmentId}/users/{userId}/wallets/adjust:
+    post:
+      tags: [economy]
+      summary: Direct wallet adjust (ledger-backed, NET-validated, idempotent)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: userId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currency, amount]
+              properties:
+                currency: { type: string }
+                amount: { type: integer, description: "Signed delta" }
+                reference: { type: string, description: Idempotency key }
+                reason: { type: string }
+      responses:
+        "200": { description: New balance + applied flag }
+        "422": { description: NET validation refused the operation }
+  /v1/projects/{projectId}/environments/{environmentId}/purchases:
+    post:
+      tags: [monetization]
+      summary: Mock checkout (idempotent; grants by product kind)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, product_id]
+              properties:
+                user_id: { type: string }
+                product_id: { type: string }
+                offer_id: { type: string }
+                idempotency_key: { type: string }
+      responses: { "201": { description: Completed }, "200": { description: Duplicate replay } }
+  /v1/projects/{projectId}/environments/{environmentId}/webhooks:
+    post:
+      tags: [webhooks]
+      summary: Register endpoint (secret shown once; HMAC-SHA256 deliveries)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+                events: { type: array, items: { type: string }, description: "['*'] or topic list" }
+      responses: { "201": { description: Created } }
+    get:
+      tags: [webhooks]
+      summary: List endpoints
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: OK } }
+  /v1/projects/{projectId}/environments/{environmentId}/analytics/overview:
+    get:
+      tags: [analytics]
+      summary: Events by day, DAU, top rules
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+        - { name: days, in: query, schema: { type: integer, default: 7 } }
+      responses: { "200": { description: Rollups } }
+  /v1/projects/{projectId}/environments/{environmentId}/simulate:
+    post:
+      tags: [analytics]
+      summary: Deterministic cohort simulation
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seed: { type: integer, default: 42 }
+                users: { type: integer, default: 100 }
+                days: { type: integer, default: 7 }
+      responses: { "200": { description: Report } }
+  /v1/projects/{projectId}/environments/{environmentId}/mcp:
+    post:
+      tags: [mcp]
+      summary: MCP JSON-RPC (tools/list, tools/call)
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+        - { name: environmentId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method]
+              properties:
+                jsonrpc: { type: string, const: "2.0" }
+                id: {}
+                method: { type: string, enum: [tools/list, tools/call] }
+                params: { type: object }
+      responses: { "200": { description: JSON-RPC response } }
+components:
+  securitySchemes:
+    bearerKey:
+      type: http
+      scheme: bearer
+      description: "keyID.secret — the stored hash covers only the secret part"
+  schemas:
+    ObjectRequest:
+      type: object
+      required: [name, type, config]
+      properties:
+        name: { type: string }
+        type:
+          type: string
+          enum: [rule, challenge, achievement, streak, level_track, currency, leaderboard, workflow, paywall, offer, product, segment, flag, reward]
+        config: { type: object, description: "Type-specific authored config — validated semantically at create" }
+    CanonicalEvent:
+      type: object
+      required: [event_type, actor_id, occurred_at]
+      properties:
+        event_id: { type: string }
+        event_type: { type: string, pattern: "^[a-z0-9_-]+(\\.[a-z0-9_-]+)+$" }
+        actor_id: { type: string }
+        subject_id: { type: string }
+        occurred_at: { type: string, format: date-time }
+        idempotency_key: { type: string }
+        payload: { type: object }
+        metadata: { type: object }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string, description: "Actionable, human-readable" }

@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.universalengagement.dev/action.schema.json",
+  "title": "Action",
+  "description": "Actions are intent (§15); the engine expands them into idempotent commands. Type-tagged, shared across languages.",
+  "oneOf": [
+    { "$ref": "#/$defs/award_xp" },
+    { "$ref": "#/$defs/add_currency" },
+    { "$ref": "#/$defs/spend_currency" },
+    { "$ref": "#/$defs/grant_item" },
+    { "$ref": "#/$defs/grant_reward" },
+    { "$ref": "#/$defs/update_progress" },
+    { "$ref": "#/$defs/start_challenge" },
+    { "$ref": "#/$defs/complete_challenge" },
+    { "$ref": "#/$defs/unlock_achievement" },
+    { "$ref": "#/$defs/update_streak" },
+    { "$ref": "#/$defs/update_leaderboard" },
+    { "$ref": "#/$defs/grant_entitlement" },
+    { "$ref": "#/$defs/notify" },
+    { "$ref": "#/$defs/show_paywall" },
+    { "$ref": "#/$defs/start_workflow" },
+    { "$ref": "#/$defs/set_variable" },
+    { "$ref": "#/$defs/emit_event" },
+    { "$ref": "#/$defs/call_webhook" }
+  ],
+  "$defs": {
+    "award_xp": {
+      "type": "object", "required": ["type", "track", "amount"],
+      "properties": {
+        "type": { "const": "award_xp" },
+        "track": { "type": "string", "description": "Level track id (e.g. default)." },
+        "amount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "add_currency": {
+      "type": "object", "required": ["type", "currency", "amount"],
+      "properties": {
+        "type": { "const": "add_currency" },
+        "currency": { "type": "string" },
+        "amount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "spend_currency": {
+      "type": "object", "required": ["type", "currency", "amount"],
+      "properties": {
+        "type": { "const": "spend_currency" },
+        "currency": { "type": "string" },
+        "amount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "grant_item": {
+      "type": "object", "required": ["type", "item"],
+      "properties": {
+        "type": { "const": "grant_item" },
+        "item": { "type": "string" },
+        "quantity": { "type": "integer", "minimum": 1, "default": 1 }
+      }
+    },
+    "grant_reward": {
+      "type": "object", "required": ["type", "reward"],
+      "properties": { "type": { "const": "grant_reward" }, "reward": { "type": "string" } }
+    },
+    "update_progress": {
+      "type": "object", "required": ["type", "challenge", "amount"],
+      "properties": {
+        "type": { "const": "update_progress" },
+        "challenge": { "type": "string" },
+        "amount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "start_challenge": {
+      "type": "object", "required": ["type", "challenge"],
+      "properties": { "type": { "const": "start_challenge" }, "challenge": { "type": "string" } }
+    },
+    "complete_challenge": {
+      "type": "object", "required": ["type", "challenge"],
+      "properties": { "type": { "const": "complete_challenge" }, "challenge": { "type": "string" } }
+    },
+    "unlock_achievement": {
+      "type": "object", "required": ["type", "achievement"],
+      "properties": { "type": { "const": "unlock_achievement" }, "achievement": { "type": "string" } }
+    },
+    "update_streak": {
+      "type": "object", "required": ["type", "streak"],
+      "properties": { "type": { "const": "update_streak" }, "streak": { "type": "string" } }
+    },
+    "update_leaderboard": {
+      "type": "object", "required": ["type", "leaderboard", "score"],
+      "properties": {
+        "type": { "const": "update_leaderboard" },
+        "leaderboard": { "type": "string" },
+        "score": { "description": "Literal integer or formula expression evaluated against the context.", "oneOf": [{ "type": "integer" }, { "type": "string" }] }
+      }
+    },
+    "grant_entitlement": {
+      "type": "object", "required": ["type", "entitlement"],
+      "properties": {
+        "type": { "const": "grant_entitlement" },
+        "entitlement": { "type": "string" },
+        "duration_seconds": { "type": "integer", "minimum": 0, "default": 0, "description": "0 = permanent." }
+      }
+    },
+    "notify": {
+      "type": "object", "required": ["type", "template"],
+      "properties": {
+        "type": { "const": "notify" },
+        "template": { "type": "string" },
+        "params": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "show_paywall": {
+      "type": "object", "required": ["type", "paywall"],
+      "properties": { "type": { "const": "show_paywall" }, "paywall": { "type": "string" } }
+    },
+    "start_workflow": {
+      "type": "object", "required": ["type", "workflow"],
+      "properties": { "type": { "const": "start_workflow" }, "workflow": { "type": "string" } }
+    },
+    "set_variable": {
+      "type": "object", "required": ["type", "key", "value"],
+      "properties": { "type": { "const": "set_variable" }, "key": { "type": "string" }, "value": {} }
+    },
+    "emit_event": {
+      "type": "object", "required": ["type", "event_type"],
+      "properties": {
+        "type": { "const": "emit_event" },
+        "event_type": { "type": "string", "pattern": "^[a-z0-9_-]+(\\.[a-z0-9_-]+)+$" },
+        "payload": { "type": "object" }
+      }
+    },
+    "call_webhook": {
+      "type": "object", "required": ["type", "endpoint"],
+      "properties": { "type": { "const": "call_webhook" }, "endpoint": { "type": "string" } }
+    }
+  }
+}

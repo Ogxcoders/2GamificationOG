@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.universalengagement.dev/time-window.schema.json",
+  "title": "TimeWindow",
+  "description": "Reusable temporal condition (§18/§207). Owned by the Time Engine — streaks, challenges, leaderboards, seasons all reference one of these instead of hardcoding 'daily'.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["type", "seconds"],
+      "properties": {
+        "type": { "const": "rolling" },
+        "seconds": { "type": "integer", "minimum": 1, "maximum": 31536000, "description": "Window of N seconds ending at the evaluation instant." }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "unit", "timezone"],
+      "properties": {
+        "type": { "const": "fixed" },
+        "unit": { "enum": ["hour", "day", "week", "month", "year"] },
+        "timezone": { "type": "string", "description": "IANA zone; unknown zones resolve to UTC deterministically." }
+      },
+      "additionalProperties": false
+    }
+  ]
+}
